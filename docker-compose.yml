@@ -1,0 +1,140 @@
+# Production-like stack. Requires an env file (NOT committed):
+#   cp .env.docker.example .env.docker      # then edit every CHANGE_ME
+#   docker compose --env-file .env.docker up -d --build
+# Run migrations explicitly (the API never migrates on startup):
+#   docker compose --env-file .env.docker run --rm api alembic upgrade head
+#
+# NOT VERIFIED: this file has not been run by its author (no Docker available).
+# Only nginx publishes a port; postgres/redis/api are reachable inside the
+# compose network only.
+
+x-app-environment: &app-environment
+  ENVIRONMENT: production
+  DEBUG: "false"
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env.docker}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379/0
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/2
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  ENABLE_API_DOCS: ${ENABLE_API_DOCS:-true}
+  CELERY_BEAT_ENABLED: ${CELERY_BEAT_ENABLED:-false}
+  CHURN_MODEL_PATH: /data/artifacts/churn/churn_model.joblib
+  MEDIA_ROOT: /data/media
+
+x-app-image: &app-image
+  build: .
+  image: ai-ecommerce:latest
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Redis is the Celery broker/result backend as well as the cache, so
+    # append-only persistence is on and a password is required.
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app-image
+    restart: unless-stopped
+    environment:
+      <<: *app-environment
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      # Only nginx (same compose network) can reach this container.
+      FORWARDED_ALLOW_IPS: "*"
+    volumes:
+      - model_artifacts:/data/artifacts
+      - media_data:/data/media
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_worker:
+    <<: *app-image
+    restart: unless-stopped
+    command: ["celery", "-A", "celery_app.celery_app", "worker", "--loglevel=info"]
+    environment: *app-environment
+    volumes:
+      - model_artifacts:/data/artifacts
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A celery_app.celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Scheduled jobs are opt-in:  docker compose --env-file .env.docker --profile beat up -d
+  # AND set CELERY_BEAT_ENABLED=true in .env.docker (see docs/production.md).
+  celery_beat:
+    <<: *app-image
+    profiles: ["beat"]
+    restart: unless-stopped
+    command: ["celery", "-A", "celery_app.celery_app", "beat", "--loglevel=info", "--schedule", "/data/beat/celerybeat-schedule"]
+    environment: *app-environment
+    # The image's HTTP health check does not apply to a beat process.
+    healthcheck:
+      disable: true
+    volumes:
+      - beat_data:/data/beat
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/nginx-health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+  model_artifacts:
+  media_data:
+  beat_data:

@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+!.env.docker.example
+*.db
+.venv/
+venv/
+.idea/
+.vscode/
+.pytest_cache/
+
+# Generated ML artifacts (regenerable by re-running training) — not source code.
+ml/artifacts/
+
+# User-uploaded media (avatars) — local dev storage.
+media/
+
+# Alembic/pytest leftovers
+test_*.db

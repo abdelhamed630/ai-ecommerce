@@ -1,0 +1,5 @@
+# Development / CI: runtime + test tooling.
+-r requirements.txt
+pytest
+httpx
+fakeredis

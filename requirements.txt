@@ -1,0 +1,24 @@
+# Runtime dependencies (installed in the Docker image).
+# NOTE: versions are intentionally left as lower bounds / unpinned, exactly as in
+# Phases 1-4, because the verified 530-test environment lives on the developer's
+# machine. For reproducible builds run `pip freeze` there and keep the result as
+# a constraints file (see docs/production.md, "Dependency pinning").
+fastapi
+uvicorn[standard]
+sqlalchemy>=2.0
+pydantic>=2
+pydantic-settings>=2
+python-jose[cryptography]
+passlib
+bcrypt==4.0.1
+python-multipart
+email-validator
+scikit-learn
+numpy
+pandas
+openpyxl
+joblib
+celery
+redis
+alembic
+psycopg[binary]>=3.1

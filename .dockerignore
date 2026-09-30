@@ -1,0 +1,25 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.idea
+.vscode
+
+# Secrets and local state must never enter the image
+.env
+.env.*
+!.env.example
+!.env.docker.example
+*.db
+media/
+ml/artifacts/
+
+tests/
+docs/
+*.md
+docker-compose*.yml
+Dockerfile
+.dockerignore
