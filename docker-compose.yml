@@ -4,7 +4,8 @@
 # Run migrations explicitly (the API never migrates on startup):
 #   docker compose --env-file .env.docker run --rm api alembic upgrade head
 #
-# NOT VERIFIED: this file has not been run by its author (no Docker available).
+# Verified locally by the maintainer: the stack builds and runs, and api, postgres, redis,
+# celery_worker and nginx report healthy (/health/ready: database ok, redis ok).
 # Only nginx publishes a port; postgres/redis/api are reachable inside the
 # compose network only.
 
@@ -12,6 +13,7 @@ x-app-environment: &app-environment
   ENVIRONMENT: production
   DEBUG: "false"
   SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env.docker}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
   DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?set POSTGRES_USER}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
   REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD}@redis:6379/0
   CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
@@ -67,6 +69,10 @@ services:
     environment:
       <<: *app-environment
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      CHATBOT_RATE_LIMIT_PER_MINUTE: ${CHATBOT_RATE_LIMIT_PER_MINUTE:-20}
+      CHATBOT_MAX_HISTORY_TURNS: ${CHATBOT_MAX_HISTORY_TURNS:-6}
       # Only nginx (same compose network) can reach this container.
       FORWARDED_ALLOW_IPS: "*"
     volumes:

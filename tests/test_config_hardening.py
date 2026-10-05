@@ -10,7 +10,9 @@ from core.config import Settings
 from core.logging_config import JsonFormatter, RedactingFilter, redact
 from main import create_app
 
-GOOD_KEY = "k" * 40
+# 48 chars / 16 distinct: passes the stronger SECRET_KEY rules (length >= 32, >= 8 distinct
+# characters, no placeholder). The old value "k" * 40 is now rejected by design.
+GOOD_KEY = "0123456789abcdef" * 3
 
 
 def _prod(**overrides):
@@ -142,6 +144,16 @@ def test_request_id_header_is_set():
 
 
 # ------------------------------------------------------------------- logging
+def test_redact_masks_llm_provider_api_keys():
+    # Key-shaped strings are built at run time (test data for the masking regex, not credentials).
+    import secrets
+
+    for key in ("gsk_" + secrets.token_hex(16), "sk-proj-" + secrets.token_hex(12)):
+        masked = redact(f"request failed for {key} at provider")
+        assert key not in masked and "***" in masked
+        assert key[8:] not in masked
+
+
 def test_redact_masks_credentials():
     assert "hunter2" not in redact("redis://:hunter2@redis:6379/0")
     assert "S3cr3t" not in redact("postgresql+psycopg://app:S3cr3t@db/shop")

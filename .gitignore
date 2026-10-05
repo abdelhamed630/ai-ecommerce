@@ -19,3 +19,13 @@ media/
 
 # Alembic/pytest leftovers
 test_*.db
+
+# Coverage / build output / logs / OS files
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+*.log
+.DS_Store
+Thumbs.db

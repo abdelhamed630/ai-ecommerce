@@ -19,6 +19,7 @@ from core.config import settings
 
 _URL_CREDENTIALS = re.compile(r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.\-]*://)[^\s/@:]*:?[^\s/@]*@")
 _BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=\-]+")
+_API_KEY = re.compile(r"\b(?:gsk_|sk-)[A-Za-z0-9_\-]{8,}")  # LLM provider keys (Groq gsk_..., OpenAI-style sk-...)
 _KV_SECRET = re.compile(
     r"(?i)\b(password|passwd|secret|secret_key|token|access_token|authorization)\b([\"']?\s*[=:]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;&]+)"
 )
@@ -31,6 +32,7 @@ def redact(text: str) -> str:
     still avoid logging secrets in the first place."""
     text = _URL_CREDENTIALS.sub(lambda m: f"{m.group('scheme')}***@", text)
     text = _BEARER.sub(lambda m: f"{m.group(1)} ***", text)
+    text = _API_KEY.sub("***", text)
     text = _KV_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}***", text)
     return text
 

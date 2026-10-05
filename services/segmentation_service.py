@@ -23,7 +23,7 @@ an API endpoint, a Celery task, Redis, or a scheduled/automatic trigger.
 This module is called explicitly, e.g. from a script or a future endpoint.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import pandas as pd
@@ -133,7 +133,7 @@ def run_customer_segmentation(
         rfm_transformed, cluster_col="Cluster"
     )
 
-    calculated_at = datetime.utcnow()
+    calculated_at = datetime.now(timezone.utc)
     segment_counts: Dict[str, int] = {}
 
     try:

@@ -128,6 +128,23 @@ class Cache:
             self._fail("set", exc)
             return False
 
+    def incr(self, key: str, ttl: int) -> Optional[int]:
+        """Atomically increment a counter that expires after `ttl` seconds.
+
+        Returns the new value, or None when Redis is unavailable (the caller
+        then falls back to its own in-process counting). Never raises.
+        """
+        if not self._active():
+            return None
+        try:
+            pipe = self._get_client().pipeline()
+            pipe.incr(key)
+            pipe.expire(key, ttl)
+            return int(pipe.execute()[0])
+        except Exception as exc:
+            self._fail("incr", exc)
+            return None
+
     def delete(self, *keys: str) -> bool:
         if not keys or not self._active():
             return False

@@ -1,4 +1,6 @@
+import tempfile
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +16,19 @@ from models.user import User, UserRole
 # controlled catalog — sharing the same growing database as every other
 # test file (which creates 100+ products) would make ranking-based
 # assertions flaky through no fault of the algorithm itself.
-_TEST_DB_PATH = "./test_recommendations.db"
+#
+# The file name is UNIQUE PER PROCESS and lives in the system temp directory,
+# not at a fixed path in the current working directory. A fixed
+# "./test_recommendations.db" is only deleted by the module fixture's teardown,
+# so an interrupted run (killed / timed out / crashed) leaves it behind with
+# its products, and the next run silently re-uses it (create_all() does not
+# empty an existing file) — as would a second pytest process started from the
+# same directory. The extra products push the catalog past the endpoint's
+# `limit <= 50` cap, so the top-50 ranking assertions fail for reasons
+# unrelated to the algorithm. A unique path makes that impossible.
+_TEST_DB_PATH = (
+    Path(tempfile.gettempdir()) / f"test_recommendations_{uuid.uuid4().hex}.db"
+).as_posix()
 _test_engine = create_engine(
     f"sqlite:///{_TEST_DB_PATH}", connect_args={"check_same_thread": False}
 )

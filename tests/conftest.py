@@ -51,6 +51,7 @@ os.environ["CELERY_BROKER_URL"] = f"{_TEST_REDIS}/14"
 os.environ["CELERY_RESULT_BACKEND"] = f"{_TEST_REDIS}/13"
 os.environ["MEDIA_ROOT"] = str(_TMP_DIR / "media")
 os.environ["ALLOWED_HOSTS"] = "*"
+os.environ["CHATBOT_RATE_LIMIT_PER_MINUTE"] = "0"  # disabled; tests/test_chatbot_improvements.py enables it explicitly
 os.environ["CORS_ALLOWED_ORIGINS"] = ""
 
 # Load settings NOW (they pick the values above up), then remove the two Celery

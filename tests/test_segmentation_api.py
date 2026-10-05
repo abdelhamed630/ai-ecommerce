@@ -93,10 +93,16 @@ def _create_product(headers, name="Segmentation Test Product", price=100.0, stoc
     return resp.json()
 
 
-def _create_completed_order(headers, product_id, quantity=1):
-    """Adds `quantity` of `product_id` to this user's cart, creates an
-    order from it, then advances it PENDING -> CONFIRMED -> COMPLETED via
-    the real API (see tests/test_orders.py for the same two-step pattern)."""
+def _create_completed_order(headers, product_id, admin_headers, quantity=1):
+    """Adds `quantity` of `product_id` to the CUSTOMER's cart, creates an
+    order from it, then advances it PENDING -> CONFIRMED -> COMPLETED via the
+    real API (the same two-step pattern as tests/test_orders.py).
+
+    Roles: the customer (`headers`, a regular user) does the cart + order
+    steps. PATCH /orders/{id}/complete is ADMIN/SELLER-only, so the two
+    advance steps are performed with `admin_headers`. The order is still
+    created by — and stays owned by — the customer (order.user_id), which is
+    what segmentation counts; that is asserted below."""
     resp = client.post(
         "/cart/items", json={"product_id": product_id, "quantity": quantity}, headers=headers
     )
@@ -106,11 +112,17 @@ def _create_completed_order(headers, product_id, quantity=1):
     assert resp.status_code == 200, resp.text
     order = resp.json()
 
-    client.patch(f"/orders/{order['id']}/complete", headers=headers)  # -> CONFIRMED
-    resp = client.patch(f"/orders/{order['id']}/complete", headers=headers)  # -> COMPLETED
+    resp = client.patch(f"/orders/{order['id']}/complete", headers=admin_headers)  # -> CONFIRMED
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "COMPLETED"
-    return resp.json()
+    assert resp.json()["status"] == "CONFIRMED"
+
+    resp = client.patch(f"/orders/{order['id']}/complete", headers=admin_headers)  # -> COMPLETED
+    assert resp.status_code == 200, resp.text
+    completed = resp.json()
+    assert completed["status"] == "COMPLETED"
+    # Ownership / customer association must survive the admin's actions.
+    assert completed["user_id"] == order["user_id"]
+    return completed
 
 
 _FAKE_RESULT = {
@@ -292,7 +304,7 @@ def test_real_end_to_end_run_via_api(admin_headers):
     # satisfy the configured K=4 even in isolation from other test files.
     for _ in range(4):
         headers, _ = _register_and_login()
-        _create_completed_order(headers, product["id"], quantity=1)
+        _create_completed_order(headers, product["id"], admin_headers, quantity=1)
 
     resp = client.post("/segmentation/run", headers=admin_headers)
     assert resp.status_code == 200, resp.text

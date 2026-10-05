@@ -1,13 +1,54 @@
 from typing import Optional
 
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
+from core.text_normalization import contains_arabic, normalize_arabic, sql_fold
 from models.product import Product
 from schemas.product import ProductCreate, ProductUpdate
+from services import product_search_service
 
 
-def get_products(db: Session, skip: int = 0, limit: int = 100):
-    return db.query(Product).offset(skip).limit(limit).all()
+def get_products(
+    db: Session,
+    skip: int = 0,
+    limit: int = 100,
+    q: Optional[str] = None,
+    category: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+):
+    """Catalogue listing with optional filters, all applied by the database.
+
+    - q: every word must occur (case-insensitive, Arabic spelling variants folded) in
+      name, description, category or brand. No word is dropped (see
+      `product_search_service.literal_terms`).
+    - category: exact, case-insensitive match (Arabic-folded when the value is Arabic).
+    - min_price / max_price: inclusive bounds.
+    Callers validate the values (api/products.py). Ordered by id so skip/limit pages
+    are stable. Only the requested page is loaded.
+    """
+    query = db.query(Product)
+    conditions = []
+
+    for term in product_search_service.literal_terms(q or ""):
+        conditions.append(product_search_service.term_condition(term))
+
+    category = (category or "").strip()
+    if category:
+        if contains_arabic(category):
+            conditions.append(sql_fold(func.lower(Product.category)) == normalize_arabic(category).lower())
+        else:
+            conditions.append(func.lower(Product.category) == category.lower())
+
+    if min_price is not None:
+        conditions.append(Product.price >= min_price)
+    if max_price is not None:
+        conditions.append(Product.price <= max_price)
+
+    if conditions:
+        query = query.filter(and_(*conditions))
+    return query.order_by(Product.id).offset(skip).limit(limit).all()
 
 
 def get_product(db: Session, product_id: int):

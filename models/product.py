@@ -10,7 +10,8 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, index=True)
     description = Column(Text, nullable=True)
-    price = Column(Float, nullable=False)
+    # Indexed for GET /products/?min_price=&max_price= range filters (migration 0003).
+    price = Column(Float, nullable=False, index=True)
     stock = Column(Integer, default=0)
     image_url = Column(String, nullable=True)
     # Nullable by design: existing products predate these fields and must

@@ -14,17 +14,21 @@ All settings are environment variables (or `.env` for local development); see
 |---|---|---|
 | `ENVIRONMENT` | `development` | `production` / `staging` enable fail-fast validation. |
 | `DEBUG` | `false` | Was `true`. Local dev opts in through `.env`. Rejected in production. |
-| `SECRET_KEY` | *(empty)* | Outside production an empty value falls back to a dev-only key and logs a warning. In production it must be >= 32 chars and not a known placeholder, otherwise startup aborts. Generate: `openssl rand -hex 32`. |
+| `SECRET_KEY` | *(empty)* | Outside production an empty value falls back to a dev-only key and logs a warning. In production it must be >= 32 chars (no leading/trailing whitespace), have >= 8 distinct characters, and not be a placeholder (any `CHANGE_ME`/`change-this`/`not-for-production` marker, matched case-insensitively), otherwise startup aborts. Generate: `openssl rand -hex 32`. |
+| `ALGORITHM` | `HS256` | JWT signing algorithm; only `HS256`, `HS384`, `HS512` are accepted (exact, case-sensitive), in every environment. |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Must be between 1 and 10080 (7 days). |
 | `DATABASE_URL` | `sqlite:///./ecommerce.db` | Production: `postgresql+psycopg://USER:PASSWORD@HOST:5432/DB`. Bare `postgresql://` is rewritten to the psycopg 3 driver. SQLite is rejected in production. |
-| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT_SECONDS` / `DB_POOL_RECYCLE_SECONDS` | 10 / 20 / 30 / 1800 | Non-SQLite only. `pool_pre_ping` is always on. Total connections per API process <= size + overflow; multiply by `WEB_CONCURRENCY`, and keep the sum below PostgreSQL `max_connections` (default 100). |
-| `ALLOWED_HOSTS` | `*` | Comma-separated. Production: explicit names, no `*`. Must include names used by health checks (`localhost`, `127.0.0.1`). |
-| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated origins. Empty = no CORS middleware (no cross-origin browser access). `*` only outside production, and then without credentials. |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` / `DB_POOL_TIMEOUT_SECONDS` / `DB_POOL_RECYCLE_SECONDS` | 10 / 20 / 30 / 1800 | Bounds: 1-100 / 0-200 / 1-300 / 30-86400. Non-SQLite only. `pool_pre_ping` is always on. Total connections per API process <= size + overflow; multiply by `WEB_CONCURRENCY`, and keep the sum below PostgreSQL `max_connections` (default 100). |
+| `ALLOWED_HOSTS` | `*` | Comma-separated. Production: explicit names, no `*`. Must include names used by health checks (`localhost`, `127.0.0.1`). Each entry must be a bare hostname, `*.domain` or `*`: no scheme, port or path (Starlette matches the Host header without its port). Malformed entries are rejected in every environment. |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated origins. Empty = no CORS middleware (no cross-origin browser access). `*` only outside production, and then without credentials. Each entry must be `http(s)://host[:port]` with no path, trailing slash, credentials, query or fragment; malformed entries are rejected in every environment. |
 | `ENABLE_API_DOCS` | `true` | Serves `/docs`, `/redoc`, `/openapi.json`. Set `false` if you do not want the API surface published. |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | `LOG_FORMAT=json` for log aggregation. |
 | `READINESS_REQUIRE_REDIS` | *(auto)* | Auto: Redis is required for `/health/ready` in production (cache enabled), optional elsewhere. |
-| `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | localhost defaults | Unchanged from Phase 4. In Docker they point at the `redis` service with a password. |
+| `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | localhost defaults | Must start with `redis://` or `rediss://` (every environment). In production a `CHANGE_ME`-style password inside the URL is rejected, as is `CELERY_TASK_ALWAYS_EAGER=true`. In Docker they point at the `redis` service with a password. |
 | `CELERY_BEAT_ENABLED` and two interval settings | `false` / weekly / daily | See section 5. |
 | `CHURN_MODEL_PATH`, `MEDIA_ROOT` | relative paths | Docker sets both to the `/data` volumes. |
+
+Numeric tuning settings (pool, cache TTLs, Celery intervals, hybrid/segmentation/churn parameters) are range-checked at startup, and related settings must be consistent (`SEGMENTATION_N_CLUSTERS` <= `SEGMENTATION_MAX_CLUSTERS`, hybrid weights not both 0, `CHURN_RISK_MEDIUM_THRESHOLD` < `CHURN_RISK_HIGH_THRESHOLD`); see `core/config.py` for each range.
 
 Configuration errors name the offending setting but never print secret values.
 
@@ -165,7 +169,7 @@ Python 3.12 is used because current numpy/pandas/scikit-learn releases require >
 | Errors | Unhandled exceptions return `{"detail":"Internal server error"}`; details only in redacted server logs. FastAPI's default 422 validation responses still echo the offending input to the *caller* (unchanged format). |
 | Logging | Redaction filter for URL credentials, bearer tokens and `password=`-style pairs; no bodies/queries logged. Redaction is defense in depth, not a substitute for not logging secrets. |
 | Auth | Unchanged: JWT (HS256) + bcrypt; roles read from the DB; admin-only endpoints unchanged. No rate limiting or token revocation exists (limitation). |
-| Tokens | `create_access_token` uses `datetime.utcnow()` (deprecated in Python 3.12 but functional); not changed. |
+| Tokens | `create_access_token` uses timezone-aware `datetime.now(timezone.utc)` for `exp` (previously the deprecated `utcnow()`); the token structure is unchanged. |
 | Cache/user isolation | Unchanged (keys built from the authenticated user id only). |
 | Secrets in repo | `.env` is git-ignored and excluded from the Docker image; only `*.example` files are tracked. **The uploaded zip contained a `.env`: rotate its `SECRET_KEY` if it was ever shared.** |
 | Docker | Non-root app user; no published DB/Redis ports; secrets come from `--env-file`. Redis password is visible in the container's process list (`redis-server --requirepass`); acceptable inside a private network, use Docker secrets/a managed Redis if that is not enough. |

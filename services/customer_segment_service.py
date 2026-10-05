@@ -11,7 +11,7 @@ when it was calculated) and hand it to `upsert_current_segment`.
         -> CustomerSegmentService (this module) -> CustomerSegment DB table
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -59,7 +59,7 @@ def upsert_current_segment(
     caller is then responsible for calling `db.commit()` once, and for
     `db.rollback()` if anything in the batch fails.
     """
-    resolved_calculated_at = calculated_at or datetime.utcnow()
+    resolved_calculated_at = calculated_at or datetime.now(timezone.utc)
 
     segment = get_current_segment(db, user_id)
     if segment is None:

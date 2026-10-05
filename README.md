@@ -1,117 +1,160 @@
-# AI E-Commerce API
+# AI E-Commerce Backend
 
-FastAPI backend for an e-commerce store with AI features: content-based, collaborative and hybrid
-product recommendations, RFM/K-Means customer segmentation and churn prediction. Redis caching and
-Celery background jobs; PostgreSQL + Alembic + Docker for production.
+FastAPI backend for an e-commerce store with AI features: a Groq-powered, product-aware shopping chatbot
+(with streaming), content-based / collaborative / hybrid recommendations, RFM customer segmentation and churn
+prediction. PostgreSQL + Alembic for data, Redis + Celery for caching and background jobs, Docker + Nginx for
+deployment.
 
-> **Verification status of Phase 5 (productionization):** written without access to Docker,
-> PostgreSQL, Redis or installed dependencies, so the new files were only syntax-checked.
-> The 530-test Phase 4 baseline passed on the developer's machine; the suite has **not** been
-> re-run since Phase 5. Run the checks in [Verify it yourself](#verify-it-yourself) before trusting any of it.
-> Details: [docs/production.md](docs/production.md).
+## Features
+
+- **FastAPI** REST API with OpenAPI docs
+- **PostgreSQL** (SQLAlchemy 2) with **Alembic** migrations
+- **Redis** (cache, rate-limit counters, Celery broker/result backend) and **Celery** workers
+- **Docker Compose** stack and **Nginx** reverse proxy
+- **JWT authentication** with roles `USER` / `SELLER` / `ADMIN` (role read from the database)
+- **Product APIs** with DB-side filtering (`q`, `category`, `min_price`, `max_price`, `skip`, `limit`)
+- **AI chatbot** (Groq, OpenAI-compatible API) that only talks about real products from the database
+- **Product-aware recommendations** inside chatbot answers, plus content-based, collaborative and hybrid recommenders
+- **Conversation history** (client-sent turns, server trims to `CHATBOT_MAX_HISTORY_TURNS`)
+- **Streaming responses** (Server-Sent Events) at `POST /chatbot/chat/stream`
+- **Rate limiting**: per-user chatbot limit in Redis (`CHATBOT_RATE_LIMIT_PER_MINUTE`) plus a per-IP Nginx limit
+- **Arabic text normalization** shared by product search and the chatbot
+- Customer segmentation, churn prediction, cart / orders / simulated payments, admin user management
+- **Automated tests** (pytest)
+
+## Verification status
+
+Reported by the maintainer from their local Docker environment (not re-run in the documentation pass):
+1215 tests collected, 1212 passed, 3 skipped, 0 failed; Alembic at `0003` (head); containers `api`, `postgres`,
+`redis`, `celery_worker`, `nginx` healthy; `/health/ready` reports `database: ok`, `redis: ok`; registration, login,
+`/auth/me`, products, chatbot and streaming verified. The GitHub Actions workflow (`.github/workflows/ci.yml`)
+has **not** been run yet.
 
 ## Architecture
 
 ```
-Client
-  |
-Nginx (reverse proxy; TLS terminated upstream)
-  |
-FastAPI (uvicorn workers)  --- auth (JWT, roles from DB), REST routers, services
-  |-- PostgreSQL   (SQLAlchemy; schema owned by Alembic)
-  |-- Redis        (cache, fail-open)  +  Celery broker/result backend
-  |-- ML artifacts (churn model on a volume)
-Celery worker  --- churn.train_model, segmentation.refresh, recommendations.refresh_user_cache
-Celery beat    --- optional schedule (off by default)
+Browser / frontend
+        |
+        v
+   Nginx :8080  (reverse proxy; per-IP limit + no buffering on /chatbot/; TLS terminated upstream)
+        |
+        v
+   FastAPI (uvicorn workers)  --- JWT auth, REST routers, services
+        |-- PostgreSQL   (schema owned by Alembic)
+        |-- Redis        (cache, chatbot rate limit, Celery broker/results)
+        |-- Groq API     (chatbot LLM; optional, answers degrade gracefully without a key)
+        |-- ML artifacts (churn model on a volume)
+
+   Celery worker --- churn.train_model, segmentation.refresh, recommendations.refresh_user_cache
+   Celery beat   --- optional schedule (off by default)
+```
+
+## Project structure
+
+```
+api/          FastAPI routers (auth, products, chatbot, cart, orders, payments, admin, health, ...)
+core/         config, security (JWT/roles), cache, rate limiting, logging, text normalization
+database/     SQLAlchemy engine/session
+models/       SQLAlchemy models
+schemas/      Pydantic request/response schemas
+services/     business logic (products, chatbot, LLM client, recommendations, ...)
+ml/           recommendation, segmentation and churn code
+tasks/        Celery tasks
+alembic/      migrations (0001 -> 0002 -> 0003)
+nginx/        nginx.conf
+scripts/      admin/bootstrap and historical migration helpers
+tests/        pytest suite
+docs/         feature docs and the frontend API contract
 ```
 
 | Concern | Where |
 |---|---|
-| Authentication / roles | `core/security.py`, `api/auth.py` (JWT authentication only; role read from DB) |
-| Recommendations | `ml/recommendation/*` (content-based, collaborative, hybrid), `services/recommendation_service.py`, `api/recommendations.py` |
-| Segmentation | `ml/segmentation/*`, `services/segmentation_*.py`, `api/segmentation.py` |
-| Churn | `ml/churn/*`, `services/churn_service.py`, `api/churn.py` |
-| Caching | `core/cache.py` (Redis, per-user keys, TTLs in settings) |
-| Background jobs | `celery_app.py`, `tasks/*`, `services/task_dispatch.py`, `api/tasks.py` |
-| Migrations | `alembic/` |
-| Health | `api/health.py` |
+| Authentication / roles | `core/security.py`, `api/auth.py` |
+| Chatbot | `api/chatbot.py`, `services/chatbot_service.py`, `services/llm_service.py`, `services/product_search_service.py` |
+| Rate limiting | `core/rate_limit.py`, `nginx/nginx.conf` |
+| Recommendations | `ml/recommendation/*`, `services/recommendation_service.py` |
+| Segmentation / churn | `ml/segmentation/*`, `ml/churn/*`, matching services and routers |
+| Background jobs | `celery_app.py`, `tasks/*`, `api/tasks.py` |
 
-Feature docs: [recommendations](docs/recommendations.md), [segmentation](docs/customer_segmentation.md),
-[churn](docs/churn_prediction.md), [authentication](docs/authentication.md), [profile](docs/profile.md).
+## Requirements
 
-## Local development (SQLite)
+- Docker and Docker Compose for the full stack, or PostgreSQL and Redis installed locally
+- Python (the Docker image uses 3.12); dependencies in `requirements.txt` (runtime) and `requirements-dev.txt` (tests)
+- A Groq API key for the chatbot LLM (optional; without it the chatbot answers "temporarily unavailable" and still returns products)
 
-Python 3.11+ is required (current numpy/pandas/scikit-learn); the Docker image uses 3.12.
+## Environment setup
+
+Never commit real secrets. Only `.env.example` and `.env.docker.example` are tracked; `.env` and `.env.docker`
+are git-ignored.
+
+Local development:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 cp .env.example .env                                   # Windows: Copy-Item .env.example .env
-alembic upgrade head                                   # creates ecommerce.db (the app no longer creates tables itself)
+# edit .env: DATABASE_URL (PostgreSQL), SECRET_KEY (openssl rand -hex 32), GROQ_API_KEY (optional)
+alembic upgrade head
 uvicorn main:app --reload
 ```
 
-Already have a development `ecommerce.db` from earlier phases? Do **not** re-run the baseline:
+Docker: see below. Full variable reference: [docs/production.md](docs/production.md#1-configuration-reference).
+
+## Docker setup
 
 ```bash
-alembic stamp 0001
-alembic upgrade head        # adds the two Phase 5 indexes
-```
-
-API docs: http://localhost:8000/docs (unless `ENABLE_API_DOCS=false`).
-
-## Tests
-
-```bash
-python -m pytest -q
-```
-
-The default database used by tests is isolated: a temp SQLite file, or `TEST_DATABASE_URL` (its name
-must contain `test`; its schema is dropped and recreated). Your `DATABASE_URL`/`.env` database is never
-used. Tests use fakeredis and Celery eager mode; no Redis/PostgreSQL is required.
-
-Optional PostgreSQL run (needs a running PostgreSQL with an empty `*_test` database):
-
-```bash
-export TEST_DATABASE_URL=postgresql+psycopg://USER:PASSWORD@localhost:5432/ai_ecommerce_test
-export ALEMBIC_TEST_DATABASE_URL=$TEST_DATABASE_URL
-python -m pytest -q
-```
-
-## Configuration
-
-Copy `.env.example` (development) or `.env.docker.example` (Docker). Full reference and the production
-rules (fail-fast on weak `SECRET_KEY`, `DEBUG`, wildcard hosts/CORS, SQLite) are in
-[docs/production.md](docs/production.md#1-configuration-reference). Never commit `.env*` files other than
-the `*.example` ones.
-
-## PostgreSQL and migrations
-
-```bash
-export DATABASE_URL=postgresql+psycopg://USER:PASSWORD@HOST:5432/DBNAME
-alembic upgrade head          # the ONLY way production schemas are created/changed
-alembic current
-alembic downgrade -1          # destructive for 0001: back up first
-alembic revision --autogenerate -m "describe change"   # then review the generated file
-```
-
-## Docker (production-like stack)
-
-```bash
-cp .env.docker.example .env.docker          # replace every CHANGE_ME
+cp .env.docker.example .env.docker          # replace every CHANGE_ME; use URL-safe values
+docker compose --env-file .env.docker config
 docker compose --env-file .env.docker build
-docker compose --env-file .env.docker run --rm api alembic upgrade head   # explicit migration
+docker compose --env-file .env.docker run --rm api alembic upgrade head
 docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker ps
 curl http://localhost:8080/health/ready
 ```
 
 Services: `api`, `postgres`, `redis`, `celery_worker`, `nginx` (published on `NGINX_PORT`, default 8080), and
-`celery_beat` behind the `beat` profile. Postgres and Redis are not published. Volumes: `postgres_data`,
-`redis_data`, `model_artifacts` (churn model), `media_data` (avatars), `beat_data`.
+`celery_beat` behind the `beat` profile. Postgres and Redis are not published. Never run `docker compose down -v`
+unless you intend to delete the database and Redis volumes.
 
-Create the first admin without an HTTP endpoint:
+Create the first admin without an HTTP endpoint (register the user through `/auth/register` first):
 `docker compose --env-file .env.docker run --rm api python scripts/set_user_role.py --help`
-(register the user through `/auth/register` first).
+
+## Database migrations
+
+```bash
+alembic current
+alembic heads
+alembic upgrade head          # the ONLY way production schemas are created/changed
+alembic revision --autogenerate -m "describe change"   # then review the generated file
+```
+
+## Running tests
+
+```bash
+python -m pytest -q
+```
+
+Tests are isolated from your real database: a temporary database file, or `TEST_DATABASE_URL` (its name must
+contain `test`; its schema is dropped and recreated). Tests use fakeredis and Celery eager mode. To run against
+PostgreSQL, set `TEST_DATABASE_URL` and `ALEMBIC_TEST_DATABASE_URL` to an empty `*_test` database.
+
+## API documentation
+
+- Interactive docs: `http://localhost:8080/docs` (Docker) or `http://localhost:8000/docs` (local), unless `ENABLE_API_DOCS=false`
+- Schema snapshot: `openapi.json` in the repository root
+- Frontend contract: [docs/FRONTEND_API.md](docs/FRONTEND_API.md)
+- Feature docs: [authentication](docs/authentication.md), [chatbot](docs/chatbot.md), [profile](docs/profile.md),
+  [recommendations](docs/recommendations.md), [segmentation](docs/customer_segmentation.md),
+  [churn](docs/churn_prediction.md), [production](docs/production.md)
+
+## Frontend integration
+
+Base URL through Nginx: `http://localhost:8080`. Send `Authorization: Bearer <access_token>`.
+`POST /auth/login` takes form-encoded `username` (the email) and `password`. The chatbot stream is
+`POST` + Server-Sent Events, so use `fetch`, not `EventSource`.
+**CORS:** `CORS_ALLOWED_ORIGINS` in `.env.docker` must contain the exact origin of the frontend
+(e.g. `https://shop.example.com`); while it is empty, browsers on another origin are blocked. `ALLOWED_HOSTS`
+must contain the hostname used to reach the API. Details: [docs/FRONTEND_API.md](docs/FRONTEND_API.md).
 
 ## Celery
 
@@ -122,42 +165,21 @@ celery -A celery_app.celery_app beat --loglevel=info        # optional; needs CE
 
 Admin endpoints queue jobs: `POST /churn/train`, `POST /segmentation/refresh`; status: `GET /tasks/{id}`.
 
-## Health endpoints
+## Security notes
 
-`GET /health` (liveness), `GET /health/live`, `GET /health/ready` (database + Redis when required; 503 if not ready).
-
-## Redis
-
-Used as the cache (per-user keys, TTL settings, fail-open) and the Celery broker/result backend. In
-Docker it has a password and append-only persistence.
-
-## CI
-
-`.github/workflows/ci.yml` runs the full suite against PostgreSQL + Redis service containers (Python 3.12) and a
-separate migration job (`alembic upgrade head`, downgrade/upgrade, `alembic check`). **It has never been run.**
-
-## Verify it yourself
-
-```bash
-python -m pytest -q                                   # expect the old 530 + new tests to pass
-alembic upgrade head && alembic check                 # on a scratch DATABASE_URL
-docker compose --env-file .env.docker build
-docker compose --env-file .env.docker run --rm api alembic upgrade head
-docker compose --env-file .env.docker up -d && docker compose --env-file .env.docker ps
-curl -i http://localhost:8080/health/ready
-docker compose --env-file .env.docker exec celery_worker celery -A celery_app.celery_app inspect ping
-```
-
-Then, with an admin token: `POST /churn/train`, poll `GET /tasks/{task_id}`; `POST /segmentation/refresh`.
-
-## Dependency pinning
-
-`requirements.txt` is unpinned (as in earlier phases) so it matches the environment the 530 tests passed in.
-For reproducible images, run `pip freeze > requirements.lock` in that environment and install with
-`pip install -r requirements.txt -c requirements.lock`.
+- Secrets live only in git-ignored env files; the Docker image excludes them (`.dockerignore`).
+- Production mode (`ENVIRONMENT=production`) refuses to start with a weak or placeholder `SECRET_KEY`, `DEBUG=true`,
+  SQLite, wildcard hosts/CORS or placeholder passwords.
+- Public registration always creates a `USER`; admin/seller roles are assigned only via `scripts/set_user_role.py`
+  or the protected admin API.
+- Chatbot endpoints require authentication and are rate-limited per user (Redis) and per IP (Nginx).
+- Unhandled errors return a generic 500; details are only in redacted server logs.
+- If a key or `SECRET_KEY` was ever shared outside your machine, rotate it.
+- TLS is not configured in Nginx: terminate HTTPS at your load balancer/ingress.
 
 ## Known limitations
 
 See [docs/production.md](docs/production.md#9-known-limitations--technical-debt): Float money columns,
-no SQLite->PostgreSQL data migration, no rate limiting, no Celery retries, single-node avatar storage,
-simulated payments, no TLS configuration in Nginx.
+no SQLite->PostgreSQL data migration, no token refresh/revocation or account lockout (rate limiting exists only for the
+chatbot), no Celery retries, single-node avatar storage, simulated payments, no TLS configuration in Nginx,
+unpinned dependencies.

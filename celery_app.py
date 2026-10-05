@@ -12,9 +12,19 @@ CELERY_BEAT_ENABLED=true and run a single beat process:
 
     celery -A celery_app.celery_app beat --loglevel=info
 """
-
+from core.config import settings
 from celery import Celery
-
+# Import all SQLAlchemy models so relationships are registered
+# before Celery tasks access the ORM.
+from models import (
+    cart,
+    customer_segment,
+    interaction,
+    order,
+    payment,
+    product,
+    user,
+)
 from core.config import settings
 
 celery_app = Celery(

@@ -9,6 +9,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from api import admin
 from api.auth import router as auth_router
 from api.cart import router as cart_router
+from api.chatbot import router as chatbot_router
 from api.churn import router as churn_router
 from api.health import router as health_router
 from api.interactions import router as interactions_router
@@ -22,7 +23,7 @@ from api.users import router as users_router
 from core.config import DEV_FALLBACK_SECRET_KEY, settings
 from core.logging_config import setup_logging
 from core.middleware import RequestLoggingMiddleware
-from models import (  # noqa: F401  (registers every model on Base.metadata; needed by Alembic and tests)
+from models import (
     cart,
     customer_segment,
     interaction,
@@ -94,6 +95,7 @@ def create_app(app_settings=settings) -> FastAPI:
     application.include_router(recommendations_router)
     application.include_router(segmentation_router)
     application.include_router(churn_router)
+    application.include_router(chatbot_router)
     application.include_router(tasks_router)
     application.include_router(users_router)
     application.include_router(admin.router)
